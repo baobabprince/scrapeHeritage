@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+.venv/
+
+# Project Data (Don't upload personal family info)
+*.json
+*.ged
+output/
+*_photos/
+full_tree_data.json
+crawler_state.json
+raw_data*.json
+mahalal_tree.ged
+
+# Logs and System
+*.log
+.DS_Store
+Thumbs.db
