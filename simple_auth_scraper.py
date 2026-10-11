@@ -6,14 +6,34 @@ import time
 from playwright.async_api import async_playwright, BrowserContext, Page
 
 class SimpleMyHeritageScraper:
-    def __init__(self, tree_url: str, email: str, password: str, output_dir: str = "output"):
+    def __init__(self, tree_url: str, email: str, password: str, output_dir: str = "output", use_browserless: bool = True, browserless_api_key: str = None):
         self.url = tree_url
         self.email = email
         self.password = password
         self.output_dir = output_dir
+        self.use_browserless = use_browserless
+        self.browserless_api_key = browserless_api_key or self.get_browserless_api_key()
         self.site_id = ""
         self.tree_id = ""
         self.parse_url()
+
+    def get_browserless_api_key(self) -> str:
+        key = os.environ.get("BROWSERLESS_API_KEY", "")
+        if key and key != "YOUR_BROWSERLESS_API_KEY":
+            return key
+        if os.path.exists("config_secrets.txt"):
+            try:
+                import re
+                with open("config_secrets.txt", "r", encoding="utf-8") as f:
+                    for line in f:
+                        match = re.match(r'^\s*BROWSERLESS_API_KEY\s*=\s*["\']?([^"\']+)["\']?', line)
+                        if match:
+                            val = match.group(1).strip()
+                            if val and val != "YOUR_BROWSERLESS_API_KEY":
+                                return val
+            except Exception:
+                pass
+        return ""
         
         # Paths
         self.base_name = f"tree_{self.site_id}"
@@ -110,24 +130,36 @@ class SimpleMyHeritageScraper:
             
             await asyncio.sleep(1)
             
+            # Accept cookie banner if present
+            try:
+                cookie_btn = await page.query_selector('.cpb_button, button[class*="cpb_button"]')
+                if cookie_btn:
+                    await cookie_btn.click()
+                    print("Clicked cookie consent button")
+                    await asyncio.sleep(1)
+            except Exception as ce:
+                print(f"Cookie banner check error: {ce}")
+
             # Try different login button selectors
             login_selectors = [
-                'button.registration_cta--XiPIY',
-                '[class*="registration_cta"]',
-                '.registration_cta--XiPIY',
                 'button[type="submit"]',
+                '.registration_cta--XiPIY',
+                '.login_page_login_button',
+                '[class*="registration_cta"]',
+                '[class*="login_button"]',
                 'input[type="submit"]'
             ]
             
             login_clicked = False
             for selector in login_selectors:
                 try:
-                    await page.wait_for_selector(selector, timeout=5000)
-                    await page.click(selector)
-                    login_clicked = True
-                    print(f"Clicked login with selector: {selector}")
-                    break
-                except:
+                    btn = await page.query_selector(selector)
+                    if btn and await btn.is_visible():
+                        await btn.click()
+                        login_clicked = True
+                        print(f"Clicked login with selector: {selector}")
+                        break
+                except Exception as e:
                     continue
             
             if not login_clicked:
@@ -186,15 +218,20 @@ class SimpleMyHeritageScraper:
     
     async def crawl(self):
         async with async_playwright() as p:
-            print("Creating browser context...")
-            browser = await p.chromium.launch(
-                headless=False,  # Show browser for debugging
-                args=[
-                    '--no-sandbox',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                ]
-            )
+            if self.use_browserless and self.browserless_api_key:
+                ws_endpoint = f"wss://chrome.browserless.io?token={self.browserless_api_key}"
+                print(f"Connecting to Browserless: wss://chrome.browserless.io?token={self.browserless_api_key[:6]}...")
+                browser = await p.chromium.connect_over_cdp(ws_endpoint)
+            else:
+                print("Launching local Chromium browser...")
+                browser = await p.chromium.launch(
+                    headless=False,
+                    args=[
+                        '--no-sandbox',
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                    ]
+                )
             
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
